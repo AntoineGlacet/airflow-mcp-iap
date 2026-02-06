@@ -1,0 +1,262 @@
+# Airflow MCP Server with Google IAP Authentication
+
+A Model Context Protocol (MCP) server for Apache Airflow 3 with Google Identity-Aware Proxy (IAP) authentication.
+
+## Features
+
+- ✅ **Automatic IAP authentication** using your gcloud credentials
+- ✅ **Automatic token refresh** - background thread refreshes tokens every 50 minutes
+- ✅ **Comprehensive Airflow API coverage** - DAGs, runs, tasks, variables, connections, pools
+- ✅ **OpenCode integration** - works seamlessly with OpenCode MCP client
+- ✅ **No service account needed** - uses your personal Google Cloud authentication
+
+## Prerequisites
+
+1. **Google Cloud SDK** installed and authenticated:
+   ```bash
+   gcloud auth login
+   ```
+
+2. **Python 3.10+** and **uv** package manager:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+3. **Access to your Airflow deployment** behind IAP with appropriate permissions
+
+## Installation
+
+1. Clone or navigate to this directory:
+   ```bash
+   cd ~/airflow-mcp-iap
+   ```
+
+2. Install dependencies:
+   ```bash
+   uv sync
+   ```
+
+## Configuration
+
+### Step 1: Find your IAP Client ID
+
+**Option A - Via GCP Console:**
+1. Go to https://console.cloud.google.com/security/iap
+2. Find your Airflow backend service
+3. Click the three dots → "Edit OAuth Client"
+4. Copy the Client ID (format: `XXXXX.apps.googleusercontent.com`)
+
+**Option B - Via gcloud CLI:**
+```bash
+# First, authenticate if needed
+gcloud auth login
+
+# List your IAP-secured backend services
+gcloud compute backend-services list --format="table(name,description)"
+
+# Get IAP settings for a specific backend service
+gcloud iap web get-iam-policy BACKEND_SERVICE_NAME --region=REGION
+```
+
+### Step 2: Create environment configuration
+
+Create a `.env` file (or set environment variables):
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your values:
+```bash
+AIRFLOW_HOST=https://your-airflow-domain.com
+IAP_CLIENT_ID=XXXXX.apps.googleusercontent.com
+```
+
+### Step 3: Test authentication
+
+Test that you can generate an IAP token:
+
+```bash
+gcloud auth print-identity-token --audiences="YOUR_IAP_CLIENT_ID"
+```
+
+Test against your Airflow instance:
+
+```bash
+TOKEN=$(gcloud auth print-identity-token --audiences="YOUR_IAP_CLIENT_ID")
+curl -H "Authorization: Bearer ${TOKEN}" "https://your-airflow-domain.com/api/v1/health"
+```
+
+You should get a 200 response with Airflow health status.
+
+## Usage
+
+### Standalone Mode
+
+Run the MCP server directly:
+
+```bash
+# Load environment variables
+export $(cat .env | xargs)
+
+# Run the server
+uv run airflow-mcp-iap
+```
+
+### OpenCode Integration
+
+Add to your OpenCode configuration (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "airflow": {
+      "type": "local",
+      "command": [
+        "uv",
+        "run",
+        "--directory",
+        "/home/antoine/airflow-mcp-iap",
+        "airflow-mcp-iap"
+      ],
+      "environment": {
+        "AIRFLOW_HOST": "{env:AIRFLOW_HOST}",
+        "IAP_CLIENT_ID": "{env:IAP_CLIENT_ID}"
+      },
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}
+```
+
+Add environment variables to your shell profile (`~/.bashrc` or `~/.zshrc`):
+
+```bash
+export AIRFLOW_HOST="https://your-airflow-domain.com"
+export IAP_CLIENT_ID="XXXXX.apps.googleusercontent.com"
+```
+
+Reload your shell and start OpenCode:
+
+```bash
+source ~/.bashrc  # or ~/.zshrc
+opencode
+```
+
+## Available Tools
+
+The MCP server provides the following tools:
+
+### DAG Management
+- `airflow_list_dags` - List all DAGs
+- `airflow_get_dag` - Get DAG details
+- `airflow_pause_dag` - Pause a DAG
+- `airflow_unpause_dag` - Unpause a DAG
+
+### DAG Runs
+- `airflow_list_dag_runs` - List DAG runs
+- `airflow_trigger_dag` - Trigger a new DAG run
+- `airflow_get_dag_run` - Get DAG run details
+
+### Tasks
+- `airflow_get_task_instance` - Get task instance details
+- `airflow_get_task_logs` - Get task logs
+
+### Variables
+- `airflow_list_variables` - List all variables
+- `airflow_get_variable` - Get a variable
+- `airflow_set_variable` - Create/update a variable
+- `airflow_delete_variable` - Delete a variable
+
+### Connections
+- `airflow_list_connections` - List all connections
+- `airflow_get_connection` - Get connection details
+
+### Pools
+- `airflow_list_pools` - List all pools
+- `airflow_get_pool` - Get pool details
+
+### Monitoring
+- `airflow_get_health` - Get Airflow health status
+- `airflow_get_version` - Get Airflow version
+
+## Example Usage in OpenCode
+
+```
+# List all DAGs
+use airflow to list all DAGs
+
+# Get status of recent DAG runs
+use airflow to show me the last 10 runs of the my_dag DAG
+
+# Trigger a DAG
+use airflow to trigger the my_dag DAG with config {"key": "value"}
+
+# Get task logs
+use airflow to get logs for task my_task in DAG my_dag, run ID manual__2024-01-01
+```
+
+## Troubleshooting
+
+### Authentication Errors
+
+**Error: "Failed to generate IAP token"**
+- Make sure you're authenticated: `gcloud auth login`
+- Verify your IAP Client ID is correct
+- Check that you have IAP access to the Airflow instance
+
+**Error: "403 Forbidden"**
+- You may not have the `IAP-secured Web App User` role
+- Ask your GCP admin to grant you access
+
+### Token Expiry
+
+Tokens automatically refresh in the background every 50 minutes. If you encounter token expiry issues:
+- The server logs will show token refresh activity
+- Restarting the MCP server will generate a fresh token
+
+### Connection Issues
+
+**Error: "Connection refused"**
+- Verify `AIRFLOW_HOST` is correct
+- Check that Airflow is accessible via IAP
+- Test with curl as shown in Step 3 above
+
+### Debug Mode
+
+Enable debug logging:
+
+```bash
+export AIRFLOW_MCP_DEBUG=true
+```
+
+This will show detailed logs including:
+- Token generation and refresh
+- API calls to Airflow
+- Error stack traces
+
+## Architecture
+
+```
+OpenCode (Local)
+    ↓
+MCP Server (Python - this package)
+    ↓ (uses gcloud CLI)
+IAP Token Provider (auto-refresh every 50 min)
+    ↓ (injects Bearer token)
+Airflow REST API (GKE + IAP)
+```
+
+## Security Notes
+
+- Tokens are generated using your personal Google Cloud credentials
+- Tokens are stored in memory only (not written to disk)
+- Tokens expire after 1 hour and are auto-refreshed
+- Background refresh thread runs every 50 minutes
+- No service account keys needed
+
+## License
+
+MIT
